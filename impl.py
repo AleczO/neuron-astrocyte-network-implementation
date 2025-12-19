@@ -140,7 +140,6 @@ class Learning():
     
     
     def get_sample_data(self, state, orig_probs, rewards):
-
         I = torch.ones(1).unsqueeze(0)
         logits, state = self.model(I, state)
 
