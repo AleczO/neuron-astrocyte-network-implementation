@@ -1,6 +1,6 @@
 # Neuron-Astrocyte Network Dynamics & Reinforcement Learning
 
-This repository provides a high-fidelity PyTorch implementation and analysis of the neuron-astrocyte network model inspired by the research paper:  
+This repository provides a semi-high level PyTorch implementation and analysis of the neuron-astrocyte network model inspired by the research paper:  
 > **[Astrocytes as a mechanism for contextually-guided network dynamics and function](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1012186)** (PLOS Computational Biology).
 
 Unlike traditional Artificial Neural Networks (ANNs), this project implements a **tripartite synapse model**, introducing astrocytes as a slow-dynamics variable that modulates synaptic weights to guide contextual switching. The model is tested in a Reinforcement Learning environment (Multi-Armed Bandits) using the REINFORCE algorithm.
@@ -27,7 +27,7 @@ Where:
 
 ---
 
-## 🛠️ Engineering Challenges & Optimizations
+## Engineering Challenges & Optimizations
 
 Translating biological ODEs into efficient PyTorch tensor operations required solving several numerical and architectural challenges:
 
@@ -49,11 +49,11 @@ During testing in **stationary** environments (where reward probabilities remain
 **Why does this happen?**
 This behavior actually highlights the core nature of the astrocytic model. In a stationary environment, fast neurons quickly adapt to the first "good enough" reward, halting exploration. Because the context never changes, the slow astrocytes ($z$) stabilize and fail to trigger a contextual switch. 
 
-The true power of this tripartite architecture—as described in the PLOS paper—emerges in **non-stationary (fluctuating) environments**. When reward distributions suddenly shift, the neurons remain trapped in their local minimum. It is the slow accumulation of error signals by the astrocytes that eventually provides a massive modulatory signal, effectively "kicking" the neurons out of the local minimum and forcing the network to explore and adapt to the new context.
+The true power of this tripartite architecture, as described in the PLOS paper, emerges in **non-stationary (fluctuating) environments**. When reward distributions suddenly shift, the neurons remain trapped in their local minimum. It is the slow accumulation of error signals by the astrocytes that eventually provides a massive modulatory signal, effectively "kicking" the neurons out of the local minimum and forcing the network to explore and adapt to the new context.
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 * Python 3.10+
