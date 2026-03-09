@@ -1,4 +1,3 @@
-from collections import defaultdict
 import torch 
 import torch.nn as nn
 import numpy as np
@@ -6,9 +5,6 @@ from torch.distributions.bernoulli import Bernoulli
 from torch.utils.data.dataloader import DataLoader
 from torch.distributions.categorical import Categorical
 import matplotlib.pyplot as plt
-
-device = "cpu"
-
 
 class Model(nn.Module):
     def __init__(self, neur_cnt, astr_cnt, in_size, out_size, gamma=0.1, tau=0.01):
@@ -30,7 +26,6 @@ class Model(nn.Module):
         self.W_in_1 = nn.Parameter(torch.Tensor(self.n, self.k))
         self.W_in_2 = nn.Parameter(torch.Tensor(self.m, self.k))
 
-
         with torch.no_grad():
             self.C.normal_(std = 1. / np.sqrt(self.n * self.n))
             self.D.normal_(std = 1. / np.sqrt(self.n * self.n))
@@ -48,22 +43,25 @@ class Model(nn.Module):
     def psi(self, z):
         return torch.tanh(z)
 
-
     def forward(self, I, hidden=None):
-
         if hidden is None:
-            x, W, z =  (torch.zeros(self.n, 1),
-                        torch.zeros(self.n, self.n),
-                        torch.zeros(self.m, 1))
-        else :
+            curr_device = self.C.device 
+            x = torch.zeros(self.n, 1, device=curr_device)
+            z = torch.zeros(self.m, 1, device=curr_device)
+            W = torch.eye(self.n, device=curr_device) * 0.01 
+        else:
             x, W, z = hidden
         
+        C_term = self.C.unsqueeze(1) * self.Phi(x)
+        F_term = self.F.unsqueeze(1) * self.psi(z)
+        
         x = (1 - self.gamma) * x + self.gamma * W @ self.phi(x) + (self.W_in_1 @ I)
-        W = (1. - self.gamma) * W + self.gamma * (torch.diag(self.C) @ self.Phi(x) + self.D @ self.psi(z)).reshape(self.n, self.n)
-        z = (1. - self.gamma * self.tau) * z + self.gamma * self.tau * (torch.diag(self.F) @ self.psi(z) + self.H @ self.Phi(x) + self.W_in_2 @ I)
+        
+        W = (1. - self.gamma) * W + self.gamma * (C_term + self.D @ self.psi(z)).reshape(self.n, self.n)
+        
+        z = (1. - self.gamma * self.tau) * z + self.gamma * self.tau * (F_term + self.H @ self.Phi(x) + self.W_in_2 @ I)
 
         hidden = (x, W, z)
-        
         return x, hidden
 
 
@@ -71,7 +69,7 @@ class NetModule(nn.Module):
     def __init__(self, in_size, out_size):
         super().__init__()
         self.net = Model(neur_cnt=128, astr_cnt=64, in_size=in_size, out_size=out_size)
-        self.lt = nn.Linear(128, 3)
+        self.lt = nn.Linear(128, out_size) 
 
     def forward(self, x, hidden):
         x, hidden = self.net(x, hidden)
@@ -80,82 +78,74 @@ class NetModule(nn.Module):
 
 
 class Learning():
-    def __init__(self, in_size, out_size):
-        super().__init__()
-        self.model = NetModule(in_size, out_size)
+    def __init__(self, in_size, out_size, device="cpu"):
+        self.device = torch.device(device)
+        self.model = NetModule(in_size, out_size).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-3)
-        self.actions_vals = torch.ones(out_size)
+        self.actions_vals = torch.ones(out_size, device=self.device)
 
-
-    def train(self, data):
-
+    def train(self, data, bptt_steps=20):
         self.model.train()
 
-
-        avg_reward = 0
-        
-        regret = 0
+        avg_reward = 0.0
         regret_rec = []
 
-        avg_regret = 0
-
-        cumulative_regret = 0
+        cumulative_regret = 0.0
         cumulative_regret_rec = []
 
         state = None
+        loss = 0.0
         
-        Loss = 0
-        
+        self.optimizer.zero_grad()
+
         for t, (rewards, def_probs) in enumerate(data):
+            # Move data to target device
+            rewards = rewards.to(self.device)
+            def_probs = def_probs.to(self.device)
+
             state, c, action, reward, regret = self.get_sample_data(state, def_probs, rewards)
 
-            Loss += - (reward - avg_reward)  * c.log_prob(action)
-            
+            # REINFORCE objective: accumulate loss
+            baseline = avg_reward
+            loss += - (reward - baseline) * c.log_prob(action)
 
-            Loss.backward()
-            self.optimizer.step()
+            # Update baseline incrementally
+            avg_reward = (avg_reward * t + reward) / (t + 1)
 
-            if isinstance(state, tuple):
-                state = tuple(var.detach() for var in state)
-            else:
-                state = state.detach()
-
-            Loss = 0
-            self.optimizer.zero_grad()
-
-
-
-            avg_reward = (avg_reward * (t) + reward) / (t + 1)
-
-            print(regret)
+            print(t, ": ", regret)
 
             cumulative_regret += regret
             cumulative_regret_rec.append(cumulative_regret)
-
             regret_rec.append(regret)
-            avg_regret = (avg_regret * (t) + regret) /  (t + 1)
-            
-        print(def_probs)
+
+            # FIX: Truncated BPTT - Only update weights and detach state every N steps
+            if (t + 1) % bptt_steps == 0 or (t + 1) == len(data):
+                loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                loss = 0.0  # Reset loss for the next chunk
+                
+                # Detach state to prevent backpropagating through the entire history
+                state = tuple(var.detach() for var in state)
+
         return cumulative_regret_rec
     
-    
     def get_sample_data(self, state, orig_probs, rewards):
-        I = torch.ones(1).unsqueeze(0)
+        I = torch.ones(1, 1, device=self.device) 
         logits, state = self.model(I, state)
 
         c = Categorical(logits=logits)
         action = c.sample()
 
-        print(action)
-
-        reward = rewards[0, action]
-
-        reward = rewards[0, action].item() if self.actions_vals[action].item() > 0 else 0
-        regret = np.max(orig_probs.numpy()) - (orig_probs.squeeze().numpy())[action]
+        reward = rewards[0, action].item() if self.actions_vals[action].item() > 0 else 0.0
+        
+        # Calculate regret
+        max_prob = torch.max(orig_probs).item()
+        chosen_prob = orig_probs[0, action].item()
+        regret = max_prob - chosen_prob
 
         return state, c, action, reward, regret
 
-        
 
 class SBDataset():
     def __init__(self, samples_num, actions_num):
@@ -167,18 +157,25 @@ class SBDataset():
     
     def __len__(self):
         return self.samples_num
-    
 
 
+if __name__ == "__main__":
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Running on device: {device}")
 
+    ACTIONS_NUM = 6
+    SAMPLES_NUM = 400 
 
-dataset = SBDataset(60, 6)
-data = DataLoader(dataset, batch_size=1, shuffle=False, generator=torch.Generator())
+    dataset = SBDataset(SAMPLES_NUM, ACTIONS_NUM)
+    data = DataLoader(dataset, batch_size=1, shuffle=False)
 
-L = Learning(1, 6)
+    L = Learning(in_size=1, out_size=ACTIONS_NUM, device=device)
 
-cumulative_regrets = L.train(data)
+    cumulative_regrets = L.train(data, bptt_steps=20)
 
-plt.plot(np.arange(len(cumulative_regrets)), cumulative_regrets)
-plt.show()
-
+    plt.plot(np.arange(len(cumulative_regrets)), cumulative_regrets)
+    plt.xlabel("Training Steps")
+    plt.ylabel("Cumulative Regret")
+    plt.title("Multi-Armed Bandit (Neuron-Astrocyte Net)")
+    plt.grid(True)
+    plt.show()
