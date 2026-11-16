@@ -55,7 +55,7 @@ class Model(nn.Module):
         C_term = self.C.unsqueeze(1) * self.Phi(x)
         F_term = self.F.unsqueeze(1) * self.psi(z)
         
-        x = (1 - self.gamma) * x + self.gamma * W @ self.phi(x) + (self.W_in_1 @ I)
+        x = (1 - self.gamma) * x + self.gamma * (W @ self.phi(x) + self.W_in_1 @ I)
         
         W = (1. - self.gamma) * W + self.gamma * (C_term + self.D @ self.psi(z)).reshape(self.n, self.n)
         
